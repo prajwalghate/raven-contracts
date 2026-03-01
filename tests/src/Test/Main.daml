@@ -1,0 +1,186 @@
+module Test.Main where
+
+import Daml.Script
+import DA.Date (date, Month(..))
+import DA.Time (time, days)
+
+import Types
+import Series
+import Vault
+import OptionToken
+
+allocate : Text -> Script Party
+allocate n = allocatePartyByHint (PartyIdHint n)
+
+mkSeries : Party -> Party -> Party -> SeriesStatus -> Script (ContractId OptionSeries)
+mkSeries operator oracle house status = submit operator do
+  createCmd OptionSeries with
+    operator
+    oracle
+    house
+    seriesRef = "SERIES-BTC-DAILY-001"
+    underlying = "BTCUSD"
+    strikePrice = 100.0
+    startTime = time (date 1970 Jan 1) 0 0 0
+    endTime = time (date 1970 Jan 2) 0 0 0
+    expiryTime = time (date 1970 Jan 3) 0 0 0
+    cadence = Daily
+    status
+    settlement = None
+
+testHybridLifecycle : Script ()
+testHybridLifecycle = script do
+  operator <- allocate "Operator"
+  oracle <- allocate "Oracle"
+  house <- allocate "House"
+  alice <- allocate "Alice"
+  bob <- allocate "Bob"
+
+  seriesCid <- mkSeries operator oracle house Active
+
+  vault0 <- submit operator do
+    createCmd CollateralVault with
+      operator
+      house
+      seriesRef = "SERIES-BTC-DAILY-001"
+      ccReserve = 100.0
+      totalSetsMinted = 0.0
+      settlementDone = False
+
+  -- BUY 1: Alice wants CALL, unwanted PUT goes to house.
+  (vault1, aliceCall10, housePut10) <- submit operator do
+    exerciseCmd vault0 MintCompleteSets with
+      trader = alice
+      desiredSide = Call
+      quantity = 10.0
+      depositAmount = 12.0
+
+  aliceCall10Q <- queryContractId alice aliceCall10
+  assertMsg "Alice should own 10 CALL tokens"
+    (fmap (.quantity) aliceCall10Q == Some 10.0)
+
+  -- SELL partial: Alice returns 5 CALL to house, then vault pays sell proceeds.
+  (aliceCall5ToSell, aliceCall5Remain) <- submit alice do
+    exerciseCmd aliceCall10 Split with splitQty = 5.0
+
+  houseCall5 <- submit alice do
+    exerciseCmd aliceCall5ToSell Transfer with newOwner = house
+
+  (vault2, sellPayoutCid) <- submit operator do
+    exerciseCmd vault1 ReleasePayout with
+      trader = alice
+      amount = 1.0
+      reason = "SELL_PAYOUT"
+
+  sellPayoutQ <- queryContractId alice sellPayoutCid
+  assertMsg "Sell payout should be created for Alice"
+    (fmap (.amount) sellPayoutQ == Some 1.0)
+
+  -- BUY 2: Bob wants PUT, unwanted CALL goes to house.
+  (vault3, bobPut8, houseCall8) <- submit operator do
+    exerciseCmd vault2 MintCompleteSets with
+      trader = bob
+      desiredSide = Put
+      quantity = 8.0
+      depositAmount = 9.0
+
+  -- Resolve: CALL wins (resolved price > strike).
+  passTime (days 2)
+  settledSeriesCid <- submit oracle do
+    exerciseCmd seriesCid SubmitSettlement with resolvedPrice = 140.0
+
+  -- Settle and pay atomically: winning side = CALL.
+  (recordCid, winnerPayoutCids) <- submit operator do
+    exerciseCmd vault3 SettleAndPay with
+      seriesCid = settledSeriesCid
+      winningTokenCids = [houseCall5, aliceCall5Remain, houseCall8]
+      losingTokenCids = [housePut10, bobPut8]
+
+  recordQ <- queryContractId operator recordCid
+  assertMsg "Settlement record should exist" (recordQ /= None)
+
+  case recordQ of
+    Some r -> do
+      assertMsg "Winning side should be CALL" (r.winningSide == Call)
+      assertMsg "Total sets minted should be 18" (r.totalSetsMinted == 18.0)
+      assertMsg "External payout should equal Alice winning qty"
+        (r.externalWinnerPayout == 5.0)
+      assertMsg "House residual should match reserve minus payout"
+        (r.houseResidual == 115.0)
+    None -> abort "Expected settlement record"
+
+  -- Only Alice should have an external settlement payout (house winners are not paid out).
+  assertMsg "Exactly one external winner payout expected" (length winnerPayoutCids == 1)
+
+  pure ()
+
+testNegativeChecks : Script ()
+testNegativeChecks = script do
+  operator <- allocate "NegOperator"
+  oracle <- allocate "NegOracle"
+  house <- allocate "NegHouse"
+  alice <- allocate "NegAlice"
+
+  -- Use a far-future series so this negative check is stable even after passTime
+  -- in other tests.
+  seriesCid <- submit operator do
+    createCmd OptionSeries with
+      operator
+      oracle
+      house
+      seriesRef = "SERIES-BTC-DAILY-NEG"
+      underlying = "BTCUSD"
+      strikePrice = 100.0
+      startTime = time (date 1970 Jan 10) 0 0 0
+      endTime = time (date 1970 Jan 11) 0 0 0
+      expiryTime = time (date 1970 Jan 12) 0 0 0
+      cadence = Daily
+      status = Active
+      settlement = None
+
+  vaultCid <- submit operator do
+    createCmd CollateralVault with
+      operator
+      house
+      seriesRef = "SERIES-BTC-DAILY-001"
+      ccReserve = 20.0
+      totalSetsMinted = 0.0
+      settlementDone = False
+
+  -- Unauthorized mint attempt.
+  submitMustFail alice do
+    exerciseCmd vaultCid MintCompleteSets with
+      trader = alice
+      desiredSide = Call
+      quantity = 1.0
+      depositAmount = 1.2
+
+  -- Settlement before end-time should fail when series not ended and wall-clock < endTime.
+  submitMustFail oracle do
+    exerciseCmd seriesCid SubmitSettlement with resolvedPrice = 110.0
+
+  -- Release payout cannot breach collateral floor.
+  (vault1, _, _) <- submit operator do
+    exerciseCmd vaultCid MintCompleteSets with
+      trader = alice
+      desiredSide = Put
+      quantity = 5.0
+      depositAmount = 5.0
+
+  submitMustFail operator do
+    exerciseCmd vault1 ReleasePayout with
+      trader = alice
+      amount = 21.0
+      reason = "INVALID_PAYOUT"
+
+  pure ()
+
+setup : Script ()
+setup = script do
+  debug "Running raven-contracts tests..."
+  testHybridLifecycle
+  debug "  testHybridLifecycle passed"
+  testNegativeChecks
+  debug "  testNegativeChecks passed"
+  debug "All tests passed."
+  pure ()

@@ -1,0 +1,8 @@
+name: raven-contracts-core
+version: 0.2.0
+sdk-version: 3.4.11
+
+source: src
+dependencies:
+  - daml-prim
+  - daml-stdlib

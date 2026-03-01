@@ -1,0 +1,227 @@
+module Vault where
+
+import Types
+import Series
+import OptionToken
+
+otherSide : OptionSide -> OptionSide
+otherSide side = case side of
+  Call -> Put
+  Put -> Call
+
+hasDuplicates : Eq a => [a] -> Bool
+hasDuplicates [] = False
+hasDuplicates (x :: rest) = elem x rest || hasDuplicates rest
+
+-- | Collateral escrow and token mint/settlement authority for one series.
+template CollateralVault
+  with
+    operator : Party
+    house : Party
+    seriesRef : Text
+    ccReserve : Decimal
+    totalSetsMinted : Decimal
+    settlementDone : Bool
+  where
+    signatory operator
+    observer house
+
+    ensure ccReserve >= 0.0 && totalSetsMinted >= 0.0
+
+    -- | Mint N complete sets; trader keeps desired side and house receives the opposite side.
+    choice MintCompleteSets : (ContractId CollateralVault, ContractId OptionToken, ContractId OptionToken)
+      with
+        trader : Party
+        desiredSide : OptionSide
+        quantity : Decimal
+        depositAmount : Decimal
+      controller operator
+      do
+        assertMsg "Vault already settled" (not settlementDone)
+        assertMsg "Quantity must be positive" (quantity > 0.0)
+        assertMsg "Deposit amount must be positive" (depositAmount > 0.0)
+        assertMsg "Deposit must cover 1 CC collateral per complete set" (depositAmount >= quantity)
+
+        keeper <- create OptionToken with
+          operator
+          seriesRef
+          side = desiredSide
+          owner = trader
+          quantity
+
+        opposite <- create OptionToken with
+          operator
+          seriesRef
+          side = otherSide desiredSide
+          owner = house
+          quantity
+
+        nextVault <- create this with
+          ccReserve = ccReserve + depositAmount
+          totalSetsMinted = totalSetsMinted + quantity
+
+        pure (nextVault, keeper, opposite)
+
+    -- | Release sell/swap payout directly from vault escrow.
+    choice ReleasePayout : (ContractId CollateralVault, ContractId CCPayout)
+      with
+        trader : Party
+        amount : Decimal
+        reason : Text
+      controller operator
+      do
+        assertMsg "Vault already settled" (not settlementDone)
+        assertMsg "Payout amount must be positive" (amount > 0.0)
+
+        let remainingReserve = ccReserve - amount
+        assertMsg "Insufficient vault reserve" (remainingReserve >= 0.0)
+        -- Keep at least full-collateral backing for outstanding complete sets.
+        assertMsg "Cannot reduce reserve below locked collateral floor"
+          (remainingReserve >= totalSetsMinted)
+
+        payoutCid <- create CCPayout with
+          operator
+          recipient = trader
+          seriesRef
+          amount
+          reason
+
+        nextVault <- create this with ccReserve = remainingReserve
+        pure (nextVault, payoutCid)
+
+    -- | Atomic series settlement: settle tokens, create winner payouts, close series and vault.
+    choice SettleAndPay : (ContractId SeriesSettlementRecord, [ContractId CCPayout])
+      with
+        seriesCid : ContractId OptionSeries
+        winningTokenCids : [ContractId OptionToken]
+        losingTokenCids : [ContractId OptionToken]
+      controller operator
+      do
+        assertMsg "Settlement already executed" (not settlementDone)
+
+        assertMsg "Winner token list contains duplicates"
+          (not (hasDuplicates winningTokenCids))
+        assertMsg "Loser token list contains duplicates"
+          (not (hasDuplicates losingTokenCids))
+
+        series <- fetch seriesCid
+        assertMsg "Series mismatch" (series.seriesRef == seriesRef)
+        assertMsg "Series must be settled first" (series.status == Settled)
+
+        settlementOutcome <- case series.settlement of
+          Some s -> pure s
+          None -> abort "Missing settlement outcome"
+
+        let winningSide = settlementOutcome.winningSide
+        let losingSide = otherSide winningSide
+
+        (winnerQty, externalWinnerPayout, winnerPayoutCids) <- settleWinners
+          seriesRef
+          house
+          winningTokenCids
+          winningSide
+
+        loserQty <- settleLosers seriesRef losingTokenCids losingSide
+
+        assertMsg "Winner quantity must equal total minted sets"
+          (winnerQty == totalSetsMinted)
+        assertMsg "Loser quantity must equal total minted sets"
+          (loserQty == totalSetsMinted)
+        assertMsg "Insufficient reserve for external winner payouts"
+          (ccReserve >= externalWinnerPayout)
+
+        -- Close series and vault in same transaction for atomic finalization.
+        archive seriesCid
+
+        recordCid <- create SeriesSettlementRecord with
+          operator
+          house
+          seriesRef
+          resolvedPrice = settlementOutcome.resolvedPrice
+          winningSide
+          totalSetsMinted
+          externalWinnerPayout
+          houseResidual = ccReserve - externalWinnerPayout
+
+        pure (recordCid, winnerPayoutCids)
+
+settleWinners
+  : Text
+  -> Party
+  -> [ContractId OptionToken]
+  -> OptionSide
+  -> Update (Decimal, Decimal, [ContractId CCPayout])
+settleWinners expectedSeriesRef house cids winningSide =
+  settleWinnersAcc expectedSeriesRef house cids winningSide 0.0 0.0 []
+
+settleWinnersAcc
+  : Text
+  -> Party
+  -> [ContractId OptionToken]
+  -> OptionSide
+  -> Decimal
+  -> Decimal
+  -> [ContractId CCPayout]
+  -> Update (Decimal, Decimal, [ContractId CCPayout])
+settleWinnersAcc _ _ [] _ qtyAcc payoutAcc payoutCids =
+  pure (qtyAcc, payoutAcc, reverse payoutCids)
+settleWinnersAcc expectedSeriesRef house (cid :: rest) winningSide qtyAcc payoutAcc payoutCids = do
+  tok <- fetch cid
+  assertMsg "Winner token series mismatch" (tok.seriesRef == expectedSeriesRef)
+  assertMsg "Winner token side mismatch" (tok.side == winningSide)
+  exercise cid SettleWinner
+
+  if tok.owner == house
+    then settleWinnersAcc expectedSeriesRef house rest winningSide (qtyAcc + tok.quantity) payoutAcc payoutCids
+    else do
+      payoutCid <- create CCPayout with
+        operator = tok.operator
+        recipient = tok.owner
+        seriesRef = tok.seriesRef
+        amount = tok.quantity
+        reason = "SERIES_SETTLEMENT"
+      settleWinnersAcc
+        expectedSeriesRef
+        house
+        rest
+        winningSide
+        (qtyAcc + tok.quantity)
+        (payoutAcc + tok.quantity)
+        (payoutCid :: payoutCids)
+
+settleLosers
+  : Text
+  -> [ContractId OptionToken]
+  -> OptionSide
+  -> Update Decimal
+settleLosers expectedSeriesRef cids losingSide =
+  settleLosersAcc expectedSeriesRef cids losingSide 0.0
+
+settleLosersAcc
+  : Text
+  -> [ContractId OptionToken]
+  -> OptionSide
+  -> Decimal
+  -> Update Decimal
+settleLosersAcc _ [] _ qtyAcc = pure qtyAcc
+settleLosersAcc expectedSeriesRef (cid :: rest) losingSide qtyAcc = do
+  tok <- fetch cid
+  assertMsg "Loser token series mismatch" (tok.seriesRef == expectedSeriesRef)
+  assertMsg "Loser token side mismatch" (tok.side == losingSide)
+  exercise cid SettleLoser
+  settleLosersAcc expectedSeriesRef rest losingSide (qtyAcc + tok.quantity)
+
+-- | Immutable settlement report for audit and off-chain indexing.
+template SeriesSettlementRecord
+  with
+    operator : Party
+    house : Party
+    seriesRef : Text
+    resolvedPrice : Decimal
+    winningSide : OptionSide
+    totalSetsMinted : Decimal
+    externalWinnerPayout : Decimal
+    houseResidual : Decimal
+  where
+    signatory operator
+    observer house

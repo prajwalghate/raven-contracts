@@ -1,0 +1,65 @@
+module OptionToken where
+
+import Types
+
+-- | Ledger-backed option token position for one holder and side.
+template OptionToken
+  with
+    operator : Party
+    seriesRef : Text
+    side : OptionSide
+    owner : Party
+    quantity : Decimal
+  where
+    signatory operator
+    observer owner
+
+    ensure quantity > 0.0
+
+    -- | User transfer (used for sells to house and P2P transfers).
+    choice Transfer : ContractId OptionToken
+      with
+        newOwner : Party
+      controller owner
+      do
+        create this with owner = newOwner
+
+    -- | Split position for partial sells.
+    choice Split : (ContractId OptionToken, ContractId OptionToken)
+      with
+        splitQty : Decimal
+      controller owner
+      do
+        assertMsg "Split quantity must be positive" (splitQty > 0.0)
+        assertMsg "Split quantity must be less than total quantity" (splitQty < quantity)
+        p1 <- create this with quantity = splitQty
+        p2 <- create this with quantity = quantity - splitQty
+        pure (p1, p2)
+
+    -- | Settlement archive path for winning tokens. Payout contracts are created elsewhere.
+    choice SettleWinner : ()
+      controller operator
+      do pure ()
+
+    -- | Settlement archive path for losing tokens.
+    choice SettleLoser : ()
+      controller operator
+      do pure ()
+
+-- | CC payout entitlement created by settlement or sell payout release.
+template CCPayout
+  with
+    operator : Party
+    recipient : Party
+    seriesRef : Text
+    amount : Decimal
+    reason : Text
+  where
+    signatory operator
+    observer recipient
+
+    ensure amount > 0.0
+
+    choice Acknowledge : ()
+      controller recipient
+      do pure ()

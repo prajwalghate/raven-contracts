@@ -1,0 +1,18 @@
+# Daml build artifacts
+.daml/
+
+# DAR files (compiled packages)
+*.dar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+log/

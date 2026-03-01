@@ -1,0 +1,20 @@
+module Types where
+
+-- | Binary option side.
+data OptionSide = Call | Put
+  deriving (Eq, Show)
+
+-- | Series cadence used by off-chain scheduler.
+data Cadence = Daily | Weekly
+  deriving (Eq, Show)
+
+-- | Lifecycle state for a series.
+data SeriesStatus = Upcoming | Active | Ended | Settled | Invalidated
+  deriving (Eq, Show)
+
+-- | Outcome summary after oracle resolution.
+data SettlementOutcome = SettlementOutcome
+  with
+    resolvedPrice : Decimal
+    winningSide : OptionSide
+  deriving (Eq, Show)

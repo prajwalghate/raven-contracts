@@ -1,0 +1,70 @@
+module Series where
+
+import Types
+
+-- | Canonical metadata + settlement authority for one binary options series.
+template OptionSeries
+  with
+    operator : Party
+    oracle : Party
+    house : Party
+    seriesRef : Text
+    underlying : Text
+    strikePrice : Decimal
+    startTime : Time
+    endTime : Time
+    expiryTime : Time
+    cadence : Cadence
+    status : SeriesStatus
+    settlement : Optional SettlementOutcome
+  where
+    signatory operator
+    observer oracle, house
+
+    ensure
+      strikePrice > 0.0
+      && startTime < endTime
+      && endTime < expiryTime
+
+    -- | Activate series once trading start time has passed.
+    choice Activate : ContractId OptionSeries
+      controller operator
+      do
+        now <- getTime
+        assertMsg "Cannot activate before start time" (now >= startTime)
+        assertMsg "Series must be Upcoming" (status == Upcoming)
+        create this with status = Active
+
+    -- | Mark series ended (trading closed).
+    choice EndTrading : ContractId OptionSeries
+      controller operator
+      do
+        now <- getTime
+        assertMsg "Cannot end before end time" (now >= endTime)
+        assertMsg "Series must be Active" (status == Active)
+        create this with status = Ended
+
+    -- | Commit oracle price and compute winning side.
+    choice SubmitSettlement : ContractId OptionSeries
+      with
+        resolvedPrice : Decimal
+      controller oracle
+      do
+        now <- getTime
+        assertMsg "Settlement requires trading ended" (status == Ended || now >= endTime)
+        assertMsg "Series already settled or invalidated" (status /= Settled && status /= Invalidated)
+
+        let winningSide = if resolvedPrice > strikePrice then Call else Put
+
+        create this with
+          status = Settled
+          settlement = Some (SettlementOutcome with resolvedPrice, winningSide)
+
+    -- | Emergency invalidation path.
+    choice Invalidate : ContractId OptionSeries
+      with
+        _reason : Text
+      controller operator
+      do
+        assertMsg "Cannot invalidate a settled series" (status /= Settled)
+        create this with status = Invalidated

@@ -1,0 +1,11 @@
+name: raven-contracts-tests
+version: 0.2.0
+sdk-version: 3.4.11
+
+source: src
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script
+data-dependencies:
+  - ../core/.daml/dist/raven-contracts-core-0.2.0.dar
