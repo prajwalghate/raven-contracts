@@ -8,7 +8,7 @@ Purpose: canonical series metadata and settlement authority.
 
 Fields:
 - `operator`, `oracle`, `house`
-- `seriesRef`, `underlying`, `strikePrice`
+- `seriesRef`, `underlying`, `strikePrice`, `feeRate`, `collateralAsset`
 - `startTime`, `endTime`, `expiryTime`, `cadence`
 - `status`, `settlement`
 

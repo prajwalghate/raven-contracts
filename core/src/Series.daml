@@ -11,6 +11,8 @@ template OptionSeries
     seriesRef : Text
     underlying : Text
     strikePrice : Decimal
+    feeRate : Decimal
+    collateralAsset : Text
     startTime : Time
     endTime : Time
     expiryTime : Time
@@ -23,6 +25,8 @@ template OptionSeries
 
     ensure
       strikePrice > 0.0
+      && feeRate >= 0.0
+      && collateralAsset /= ""
       && startTime < endTime
       && endTime < expiryTime
 
