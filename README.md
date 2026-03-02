@@ -63,3 +63,4 @@ Read next:
 - `docs/CONTRACT-SPEC.md`
 - `docs/HANDOFF.md`
 - `docs/NOOB-DEVELOPER-GUIDE.md`
+- `docs/SANDBOX-AND-SCRIPT-TESTING.md`

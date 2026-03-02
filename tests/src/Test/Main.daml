@@ -10,7 +10,7 @@ import Vault
 import OptionToken
 
 allocate : Text -> Script Party
-allocate n = allocatePartyByHint (PartyIdHint n)
+allocate n = allocateParty n
 
 mkSeries : Party -> Party -> Party -> SeriesStatus -> Script (ContractId OptionSeries)
 mkSeries operator oracle house status = submit operator do
