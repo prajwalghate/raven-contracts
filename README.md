@@ -65,8 +65,6 @@ Read next:
 
 - `docs/CONTRACT-SPEC.md`
 - `docs/FUNCTIONALITY-FLOW.md`
-- `docs/CONTRACT-GETTERS-AND-STORAGE.md`
-- `docs/TEAM-QUESTIONNAIRE-FAQ.md`
-- `docs/HANDOFF.md`
-- `docs/NOOB-DEVELOPER-GUIDE.md`
+- `docs/DEVELOPER-GUIDE.md`
+- `docs/INTEGRATION-GUIDE.md`
 - `docs/SANDBOX-AND-SCRIPT-TESTING.md`

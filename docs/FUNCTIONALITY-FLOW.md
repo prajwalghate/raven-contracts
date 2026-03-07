@@ -199,3 +199,41 @@ sequenceDiagram
   end
   V-->>O: (newVaultCid, traderTokenCid, houseTokenCid, markerCids)
 ```
+
+## 9) Getter and storage map
+
+DAML has no Solidity-style view getters. Read data by:
+- querying active contracts by template
+- fetching known CIDs
+- reading transaction events (create/archive/exercise)
+
+Main storage and what backend reads:
+- `OptionSeries`: series metadata, status, settlement.
+- `CollateralVault`: reserve state, seed accounting, minted-set totals.
+- `OptionToken`: live remaining positions.
+- `PositionLot`: original quantity per buy lot.
+- `PositionLotEvent`: immutable quantity event timeline.
+- `CCPayout`: payout entitlements + optional lot linkage.
+- `SeriesSettlementRecord`: immutable settlement report.
+- `ActivityAudit`: reason/memo/context audit records.
+
+## 10) Team FAQ (short form)
+
+### Is liquidity common across series?
+No. Each series has its own vault/accounting.
+
+### Do we need separate wallets for each series?
+Not required. One treasury is fine, but reconciliation must stay series-scoped.
+
+### How do we handle initial and additional seed?
+Initial at vault create (`ccReserve` + `initialSeedLiquidity`), later via `AddSeedLiquidity`.
+Withdrawals use `RemoveSeedLiquidity` and only from additional seed.
+
+### Do we track original quantity and remaining quantity?
+Yes. Original from `PositionLot`, remaining from active `OptionToken`.
+
+### After `ReleasePayout`, do we audit and settle?
+Yes. Ledger writes payout + audit (+ lot event). Off-chain processor performs actual payment settlement.
+
+### Why does script fail with wallclock `setTime` error?
+Because tests use `passTime`. Run both sandbox and script with `--static-time`.
