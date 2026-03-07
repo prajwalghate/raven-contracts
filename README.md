@@ -18,7 +18,10 @@ Hybrid architecture from `raven_flow.html`:
 - `OptionSeries`: metadata and settlement state
 - `CollateralVault`: CC escrow, complete-set mint, payout release, settlement finalization
 - `OptionToken`: CALL/PUT ownership contracts
-- `CCPayout` + `SeriesSettlementRecord`: payout and audit artifacts
+- `CCPayout` + `SeriesSettlementRecord`: payout and settlement artifacts
+- Splice featured app markers via `Splice.Api.FeaturedAppRightV1`
+- `ActivityAudit`: memo/user-id audit metadata per action
+- `PositionLot` + `PositionLotEvent`: original quantity and lot event accounting
 
 AMM pricing and pool state remain off-chain.
 
@@ -47,9 +50,9 @@ dpm test
 ## Output DARs
 
 - Core DAR (upload target):
-  - `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-core-0.2.0.dar`
+  - `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-0.2.1.dar`
 - Tests DAR (local/testing only):
-  - `/Users/prajwalghate/Documents/Work/canton/raven-contracts/tests/.daml/dist/raven-contracts-tests-0.2.0.dar`
+  - `/Users/prajwalghate/Documents/Work/canton/raven-contracts/tests/.daml/dist/raven-contracts-tests-0.2.1.dar`
 
 ## Integration Model (with ALPEND-PREDICTIONS-)
 
@@ -61,6 +64,9 @@ dpm test
 Read next:
 
 - `docs/CONTRACT-SPEC.md`
+- `docs/FUNCTIONALITY-FLOW.md`
+- `docs/CONTRACT-GETTERS-AND-STORAGE.md`
+- `docs/TEAM-QUESTIONNAIRE-FAQ.md`
 - `docs/HANDOFF.md`
 - `docs/NOOB-DEVELOPER-GUIDE.md`
 - `docs/SANDBOX-AND-SCRIPT-TESTING.md`

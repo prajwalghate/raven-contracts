@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CORE_DAR="$ROOT_DIR/core/.daml/dist/raven-contracts-core-0.2.0.dar"
-TESTS_DAR="$ROOT_DIR/tests/.daml/dist/raven-contracts-tests-0.2.0.dar"
+CORE_DAR="$ROOT_DIR/core/.daml/dist/raven-contracts-0.2.1.dar"
+TESTS_DAR="$ROOT_DIR/tests/.daml/dist/raven-contracts-tests-0.2.1.dar"
 
 LEDGER_HOST="127.0.0.1"
 LEDGER_PORT="19065"
@@ -27,6 +27,11 @@ Usage: $(basename "$0") [options]
 Options:
   --host <host>                 Ledger host (default: ${LEDGER_HOST})
   --port <port>                 Ledger gRPC port (default: ${LEDGER_PORT})
+  --admin-port <port>           Admin API port (default: ${ADMIN_PORT})
+  --json-port <port>            JSON API port (default: ${JSON_PORT})
+  --sequencer-public-port <p>   Sequencer public port (default: ${SEQ_PUBLIC_PORT})
+  --sequencer-admin-port <p>    Sequencer admin port (default: ${SEQ_ADMIN_PORT})
+  --mediator-admin-port <p>     Mediator admin port (default: ${MEDIATOR_ADMIN_PORT})
   --script <Module:Entity>      Script name (default: ${SCRIPT_NAME})
   --all                         Run all scripts instead of one script
   --no-build                    Skip dpm build --all
@@ -75,6 +80,16 @@ parse_args() {
         LEDGER_HOST="$2"; shift 2 ;;
       --port)
         LEDGER_PORT="$2"; shift 2 ;;
+      --admin-port)
+        ADMIN_PORT="$2"; shift 2 ;;
+      --json-port)
+        JSON_PORT="$2"; shift 2 ;;
+      --sequencer-public-port)
+        SEQ_PUBLIC_PORT="$2"; shift 2 ;;
+      --sequencer-admin-port)
+        SEQ_ADMIN_PORT="$2"; shift 2 ;;
+      --mediator-admin-port)
+        MEDIATOR_ADMIN_PORT="$2"; shift 2 ;;
       --script)
         SCRIPT_NAME="$2"; shift 2 ;;
       --all)

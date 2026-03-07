@@ -23,7 +23,7 @@ Choices:
 Purpose: on-ledger CALL/PUT position ownership.
 
 Fields:
-- `operator`, `seriesRef`, `side`, `owner`, `quantity`
+- `operator`, `seriesRef`, `side`, `owner`, `quantity`, `metadata`, `lotCid`
 
 Choices:
 - `Transfer` (owner)
@@ -38,31 +38,62 @@ Purpose: escrow and lifecycle control for a series.
 Fields:
 - `operator`, `house`, `seriesRef`
 - `ccReserve`
+- `initialSeedLiquidity`, `additionalSeedLiquidity`
 - `totalSetsMinted`
 - `settlementDone`
 
 Choices:
+- `AddSeedLiquidity` (operator)
+  - Increases vault reserve after creation
+  - Tracks additional seeded collateral
+- `RemoveSeedLiquidity` (operator)
+  - Decreases vault reserve from additional seed liquidity
+  - Enforces reserve floor against outstanding minted sets
+  - Cannot remove more than `additionalSeedLiquidity`
 - `MintCompleteSets` (operator)
+  - Inputs include `metadata`, `choiceContext`, `reason`, and optional `featuredAppRightCid`
   - Mints desired side to trader
   - Mints opposite side to house
   - Updates reserve and `totalSetsMinted`
+  - Creates Splice activity marker(s) when `featuredAppRightCid` is provided
+  - Creates `ActivityAudit` with memo/user metadata
 - `ReleasePayout` (operator)
+  - Inputs include `soldTokenCid`, `metadata`, `choiceContext`, `reason`, and optional `featuredAppRightCid`
   - Emits `CCPayout`
   - Enforces reserve floor `remainingReserve >= totalSetsMinted`
+  - Creates Splice activity marker(s) when `featuredAppRightCid` is provided
+  - Creates `ActivityAudit` with memo/user metadata
 - `SettleAndPay` (operator)
+  - Inputs include `metadata`, `choiceContext`, `reason`, and optional `featuredAppRightCid`
   - Validates settled series
   - Validates token lists and side/series consistency
   - Archives all passed tokens
   - Creates payout contracts for non-house winning holders
   - Archives series and emits immutable settlement record
+  - Creates Splice activity marker(s) when `featuredAppRightCid` is provided
+  - Creates `ActivityAudit` with memo/user metadata
 
 ## `CCPayout`
 
 Purpose: payout entitlement for off-chain transfer processor or future cash-token bridge.
+Carries `sourceLotCid` when payout is linked to a lot.
 
 ## `SeriesSettlementRecord`
 
 Purpose: immutable settlement event for indexers and audit.
+
+## `ActivityAudit`
+
+Purpose: immutable Raven action metadata including Splice-compatible metadata map.
+Carries `choiceContext`, `reason`, `externalUserId`, and `userMemo` via `markerMetadata.values`.
+
+## `PositionLot`
+
+Purpose: immutable original-quantity record for user buy lot accounting.
+
+## `PositionLotEvent`
+
+Purpose: immutable lot event stream for mint/sell/settlement quantity tracking.
 
 ## Invariants
 

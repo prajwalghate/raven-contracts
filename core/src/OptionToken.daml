@@ -1,6 +1,42 @@
 module OptionToken where
 
 import Types
+import DA.TextMap qualified as TextMap
+import Splice.Api.Token.MetadataV1 (Metadata(..), ChoiceContext)
+
+data UserMetadata = UserMetadata
+  with
+    externalUserId : Optional Text
+    userMemo : Optional Text
+  deriving (Eq, Show)
+
+data PositionEventKind
+  = LotEventMint
+  | LotEventSell
+  | LotEventSettlementWin
+  | LotEventSettlementLoss
+  deriving (Eq, Show)
+
+mkMarkerReason : Text -> UserMetadata -> Text
+mkMarkerReason base metadata =
+  let userIdPart = case metadata.externalUserId of
+        Some uid -> " userId=" <> uid
+        None -> ""
+      memoPart = case metadata.userMemo of
+        Some memo -> " memo=" <> memo
+        None -> ""
+  in base <> userIdPart <> memoPart
+
+mkSpliceMetadata : Text -> UserMetadata -> Metadata
+mkSpliceMetadata reason metadata =
+  let base = TextMap.fromList [("splice.lfdecentralizedtrust.org/reason", reason)]
+      withUserId = case metadata.externalUserId of
+        Some uid -> TextMap.insert "raven.market/external_user_id" uid base
+        None -> base
+      withMemo = case metadata.userMemo of
+        Some memo -> TextMap.insert "raven.market/user_memo" memo withUserId
+        None -> withUserId
+  in Metadata with values = withMemo
 
 -- | Ledger-backed option token position for one holder and side.
 template OptionToken
@@ -10,6 +46,8 @@ template OptionToken
     side : OptionSide
     owner : Party
     quantity : Decimal
+    metadata : UserMetadata
+    lotCid : Optional (ContractId PositionLot)
   where
     signatory operator
     observer owner
@@ -54,6 +92,8 @@ template CCPayout
     seriesRef : Text
     amount : Decimal
     reason : Text
+    metadata : UserMetadata
+    sourceLotCid : Optional (ContractId PositionLot)
   where
     signatory operator
     observer recipient
@@ -63,3 +103,57 @@ template CCPayout
     choice Acknowledge : ()
       controller recipient
       do pure ()
+
+-- | Immutable audit record for business action metadata.
+template ActivityAudit
+  with
+    operator : Party
+    actor : Party
+    seriesRef : Text
+    action : Text
+    reason : Text
+    metadata : UserMetadata
+    choiceContext : ChoiceContext
+    markerMetadata : Metadata
+    eventTime : Time
+  where
+    signatory operator
+    observer actor
+
+-- | Immutable position lot created at mint for original-quantity accounting.
+template PositionLot
+  with
+    operator : Party
+    trader : Party
+    seriesRef : Text
+    side : OptionSide
+    originalQuantity : Decimal
+    createdAt : Time
+    metadata : UserMetadata
+  where
+    signatory operator
+    observer trader
+
+    ensure originalQuantity > 0.0
+
+-- | Immutable lot event stream for sell and settlement accounting.
+template PositionLotEvent
+  with
+    operator : Party
+    trader : Party
+    lotCid : ContractId PositionLot
+    seriesRef : Text
+    side : OptionSide
+    eventKind : PositionEventKind
+    quantity : Decimal
+    tokenCid : ContractId OptionToken
+    reason : Text
+    metadata : UserMetadata
+    choiceContext : ChoiceContext
+    markerMetadata : Metadata
+    eventTime : Time
+  where
+    signatory operator
+    observer trader
+
+    ensure quantity > 0.0

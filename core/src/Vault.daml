@@ -3,6 +3,8 @@ module Vault where
 import Types
 import Series
 import OptionToken
+import Splice.Api.FeaturedAppRightV1
+import Splice.Api.Token.MetadataV1 (ChoiceContext)
 
 otherSide : OptionSide -> OptionSide
 otherSide side = case side of
@@ -20,21 +22,105 @@ template CollateralVault
     house : Party
     seriesRef : Text
     ccReserve : Decimal
+    initialSeedLiquidity : Decimal
+    additionalSeedLiquidity : Decimal
     totalSetsMinted : Decimal
     settlementDone : Bool
   where
     signatory operator
     observer house
 
-    ensure ccReserve >= 0.0 && totalSetsMinted >= 0.0
+    ensure
+      ccReserve >= 0.0
+      && initialSeedLiquidity >= 0.0
+      && additionalSeedLiquidity >= 0.0
+      && ccReserve >= initialSeedLiquidity + additionalSeedLiquidity
+      && totalSetsMinted >= 0.0
+
+    -- | Add extra operator seed liquidity after vault creation.
+    choice AddSeedLiquidity : (ContractId CollateralVault, [ContractId FeaturedAppActivityMarker])
+      with
+        amount : Decimal
+        metadata : UserMetadata
+        choiceContext : ChoiceContext
+        reason : Text
+        featuredAppRightCid : Optional (ContractId FeaturedAppRight)
+      controller operator
+      do
+        assertMsg "Seed amount must be positive" (amount > 0.0)
+        assertMsg "Vault already settled" (not settlementDone)
+
+        nextVault <- create this with
+          ccReserve = ccReserve + amount
+          additionalSeedLiquidity = additionalSeedLiquidity + amount
+
+        now <- getTime
+        _auditCid <- create ActivityAudit with
+          operator
+          actor = operator
+          seriesRef
+          action = "ADD_SEED_LIQUIDITY"
+          reason = mkMarkerReason reason metadata
+          metadata
+          choiceContext
+          markerMetadata = mkSpliceMetadata reason metadata
+          eventTime = now
+
+        markerCids <- createFeaturedMarker featuredAppRightCid operator
+        pure (nextVault, markerCids)
+
+    -- | Remove extra operator seed liquidity after vault creation.
+    choice RemoveSeedLiquidity : (ContractId CollateralVault, [ContractId FeaturedAppActivityMarker])
+      with
+        amount : Decimal
+        metadata : UserMetadata
+        choiceContext : ChoiceContext
+        reason : Text
+        featuredAppRightCid : Optional (ContractId FeaturedAppRight)
+      controller operator
+      do
+        assertMsg "Seed removal amount must be positive" (amount > 0.0)
+        assertMsg "Vault already settled" (not settlementDone)
+        assertMsg "Cannot remove more than additional seed liquidity" (amount <= additionalSeedLiquidity)
+
+        let newReserve = ccReserve - amount
+        let newAdditionalSeed = additionalSeedLiquidity - amount
+
+        assertMsg "Cannot reduce reserve below locked collateral floor"
+          (newReserve >= totalSetsMinted)
+        assertMsg "Reserve must remain above total seeded liquidity"
+          (newReserve >= initialSeedLiquidity + newAdditionalSeed)
+
+        nextVault <- create this with
+          ccReserve = newReserve
+          additionalSeedLiquidity = newAdditionalSeed
+
+        now <- getTime
+        _auditCid <- create ActivityAudit with
+          operator
+          actor = operator
+          seriesRef
+          action = "REMOVE_SEED_LIQUIDITY"
+          reason = mkMarkerReason reason metadata
+          metadata
+          choiceContext
+          markerMetadata = mkSpliceMetadata reason metadata
+          eventTime = now
+
+        markerCids <- createFeaturedMarker featuredAppRightCid operator
+        pure (nextVault, markerCids)
 
     -- | Mint N complete sets; trader keeps desired side and house receives the opposite side.
-    choice MintCompleteSets : (ContractId CollateralVault, ContractId OptionToken, ContractId OptionToken)
+    choice MintCompleteSets : (ContractId CollateralVault, ContractId OptionToken, ContractId OptionToken, [ContractId FeaturedAppActivityMarker])
       with
         trader : Party
         desiredSide : OptionSide
         quantity : Decimal
         depositAmount : Decimal
+        metadata : UserMetadata
+        choiceContext : ChoiceContext
+        reason : Text
+        featuredAppRightCid : Optional (ContractId FeaturedAppRight)
       controller operator
       do
         assertMsg "Vault already settled" (not settlementDone)
@@ -42,12 +128,24 @@ template CollateralVault
         assertMsg "Deposit amount must be positive" (depositAmount > 0.0)
         assertMsg "Deposit must cover 1 CC collateral per complete set" (depositAmount >= quantity)
 
+        now <- getTime
+        lotCid <- create PositionLot with
+          operator
+          trader
+          seriesRef
+          side = desiredSide
+          originalQuantity = quantity
+          createdAt = now
+          metadata
+
         keeper <- create OptionToken with
           operator
           seriesRef
           side = desiredSide
           owner = trader
           quantity
+          metadata
+          lotCid = Some lotCid
 
         opposite <- create OptionToken with
           operator
@@ -55,19 +153,53 @@ template CollateralVault
           side = otherSide desiredSide
           owner = house
           quantity
+          metadata = UserMetadata with externalUserId = None, userMemo = None
+          lotCid = None
 
         nextVault <- create this with
           ccReserve = ccReserve + depositAmount
           totalSetsMinted = totalSetsMinted + quantity
 
-        pure (nextVault, keeper, opposite)
+        _lotEventCid <- create PositionLotEvent with
+          operator
+          trader
+          lotCid
+          seriesRef
+          side = desiredSide
+          eventKind = LotEventMint
+          quantity
+          tokenCid = keeper
+          reason = mkMarkerReason reason metadata
+          metadata
+          choiceContext
+          markerMetadata = mkSpliceMetadata reason metadata
+          eventTime = now
+
+        _auditCid <- create ActivityAudit with
+          operator
+          actor = trader
+          seriesRef
+          action = "MINT_COMPLETE_SETS"
+          reason = mkMarkerReason reason metadata
+          metadata
+          choiceContext
+          markerMetadata = mkSpliceMetadata reason metadata
+          eventTime = now
+
+        markerCids <- createFeaturedMarker featuredAppRightCid operator
+
+        pure (nextVault, keeper, opposite, markerCids)
 
     -- | Release sell/swap payout directly from vault escrow.
-    choice ReleasePayout : (ContractId CollateralVault, ContractId CCPayout)
+    choice ReleasePayout : (ContractId CollateralVault, ContractId CCPayout, [ContractId FeaturedAppActivityMarker])
       with
         trader : Party
+        soldTokenCid : ContractId OptionToken
         amount : Decimal
         reason : Text
+        metadata : UserMetadata
+        choiceContext : ChoiceContext
+        featuredAppRightCid : Optional (ContractId FeaturedAppRight)
       controller operator
       do
         assertMsg "Vault already settled" (not settlementDone)
@@ -79,22 +211,66 @@ template CollateralVault
         assertMsg "Cannot reduce reserve below locked collateral floor"
           (remainingReserve >= totalSetsMinted)
 
+        soldToken <- fetch soldTokenCid
+        assertMsg "Sold token must belong to this series" (soldToken.seriesRef == seriesRef)
+        assertMsg "Sold token must be transferred to house before payout" (soldToken.owner == house)
+
         payoutCid <- create CCPayout with
           operator
           recipient = trader
           seriesRef
           amount
-          reason
+          reason = mkMarkerReason reason metadata
+          metadata
+          sourceLotCid = soldToken.lotCid
 
         nextVault <- create this with ccReserve = remainingReserve
-        pure (nextVault, payoutCid)
+
+        now <- getTime
+        case soldToken.lotCid of
+          Some lotCid -> do
+            _lotEventCid <- create PositionLotEvent with
+              operator
+              trader
+              lotCid
+              seriesRef = soldToken.seriesRef
+              side = soldToken.side
+              eventKind = LotEventSell
+              quantity = soldToken.quantity
+              tokenCid = soldTokenCid
+              reason = mkMarkerReason reason metadata
+              metadata
+              choiceContext
+              markerMetadata = mkSpliceMetadata reason metadata
+              eventTime = now
+            pure ()
+          None -> pure ()
+
+        _auditCid <- create ActivityAudit with
+          operator
+          actor = trader
+          seriesRef
+          action = "RELEASE_PAYOUT"
+          reason = mkMarkerReason reason metadata
+          metadata
+          choiceContext
+          markerMetadata = mkSpliceMetadata reason metadata
+          eventTime = now
+
+        markerCids <- createFeaturedMarker featuredAppRightCid operator
+
+        pure (nextVault, payoutCid, markerCids)
 
     -- | Atomic series settlement: settle tokens, create winner payouts, close series and vault.
-    choice SettleAndPay : (ContractId SeriesSettlementRecord, [ContractId CCPayout])
+    choice SettleAndPay : (ContractId SeriesSettlementRecord, [ContractId CCPayout], [ContractId FeaturedAppActivityMarker])
       with
         seriesCid : ContractId OptionSeries
         winningTokenCids : [ContractId OptionToken]
         losingTokenCids : [ContractId OptionToken]
+        metadata : UserMetadata
+        choiceContext : ChoiceContext
+        reason : Text
+        featuredAppRightCid : Optional (ContractId FeaturedAppRight)
       controller operator
       do
         assertMsg "Settlement already executed" (not settlementDone)
@@ -120,8 +296,17 @@ template CollateralVault
           house
           winningTokenCids
           winningSide
+          reason
+          metadata
+          choiceContext
 
-        loserQty <- settleLosers seriesRef losingTokenCids losingSide
+        loserQty <- settleLosers
+          seriesRef
+          losingTokenCids
+          losingSide
+          reason
+          metadata
+          choiceContext
 
         assertMsg "Winner quantity must equal total minted sets"
           (winnerQty == totalSetsMinted)
@@ -143,48 +328,106 @@ template CollateralVault
           externalWinnerPayout
           houseResidual = ccReserve - externalWinnerPayout
 
-        pure (recordCid, winnerPayoutCids)
+        now <- getTime
+        _auditCid <- create ActivityAudit with
+          operator
+          actor = operator
+          seriesRef
+          action = "SETTLE_AND_PAY"
+          reason = mkMarkerReason reason metadata
+          metadata
+          choiceContext
+          markerMetadata = mkSpliceMetadata reason metadata
+          eventTime = now
+
+        markerCids <- createFeaturedMarker featuredAppRightCid operator
+
+        pure (recordCid, winnerPayoutCids, markerCids)
+
+createFeaturedMarker
+  : Optional (ContractId FeaturedAppRight)
+  -> Party
+  -> Update [ContractId FeaturedAppActivityMarker]
+createFeaturedMarker featuredAppRightCid operator =
+  case featuredAppRightCid of
+    Some rightCid -> do
+      right <- fetch rightCid
+      assertMsg "Featured app right provider mismatch" ((view right).provider == operator)
+      FeaturedAppRight_CreateActivityMarkerResult activityMarkerCids <- exercise rightCid FeaturedAppRight_CreateActivityMarker with
+        beneficiaries = [AppRewardBeneficiary with beneficiary = operator, weight = 1.0]
+      pure activityMarkerCids
+    None -> pure []
 
 settleWinners
   : Text
   -> Party
   -> [ContractId OptionToken]
   -> OptionSide
+  -> Text
+  -> UserMetadata
+  -> ChoiceContext
   -> Update (Decimal, Decimal, [ContractId CCPayout])
-settleWinners expectedSeriesRef house cids winningSide =
-  settleWinnersAcc expectedSeriesRef house cids winningSide 0.0 0.0 []
+settleWinners expectedSeriesRef house cids winningSide reason metadata choiceContext =
+  settleWinnersAcc expectedSeriesRef house cids winningSide reason metadata choiceContext 0.0 0.0 []
 
 settleWinnersAcc
   : Text
   -> Party
   -> [ContractId OptionToken]
   -> OptionSide
+  -> Text
+  -> UserMetadata
+  -> ChoiceContext
   -> Decimal
   -> Decimal
   -> [ContractId CCPayout]
   -> Update (Decimal, Decimal, [ContractId CCPayout])
-settleWinnersAcc _ _ [] _ qtyAcc payoutAcc payoutCids =
+settleWinnersAcc _ _ [] _ _ _ _ qtyAcc payoutAcc payoutCids =
   pure (qtyAcc, payoutAcc, reverse payoutCids)
-settleWinnersAcc expectedSeriesRef house (cid :: rest) winningSide qtyAcc payoutAcc payoutCids = do
+settleWinnersAcc expectedSeriesRef house (cid :: rest) winningSide reason metadata choiceContext qtyAcc payoutAcc payoutCids = do
   tok <- fetch cid
   assertMsg "Winner token series mismatch" (tok.seriesRef == expectedSeriesRef)
   assertMsg "Winner token side mismatch" (tok.side == winningSide)
+  now <- getTime
+  case tok.lotCid of
+    Some lotCid -> do
+      _lotEventCid <- create PositionLotEvent with
+        operator = tok.operator
+        trader = tok.owner
+        lotCid
+        seriesRef = tok.seriesRef
+        side = tok.side
+        eventKind = LotEventSettlementWin
+        quantity = tok.quantity
+        tokenCid = cid
+        reason = mkMarkerReason reason metadata
+        metadata
+        choiceContext
+        markerMetadata = mkSpliceMetadata reason metadata
+        eventTime = now
+      pure ()
+    None -> pure ()
   exercise cid SettleWinner
 
   if tok.owner == house
-    then settleWinnersAcc expectedSeriesRef house rest winningSide (qtyAcc + tok.quantity) payoutAcc payoutCids
+    then settleWinnersAcc expectedSeriesRef house rest winningSide reason metadata choiceContext (qtyAcc + tok.quantity) payoutAcc payoutCids
     else do
       payoutCid <- create CCPayout with
         operator = tok.operator
         recipient = tok.owner
         seriesRef = tok.seriesRef
         amount = tok.quantity
-        reason = "SERIES_SETTLEMENT"
+        reason = mkMarkerReason "SERIES_SETTLEMENT" tok.metadata
+        metadata = tok.metadata
+        sourceLotCid = tok.lotCid
       settleWinnersAcc
         expectedSeriesRef
         house
         rest
         winningSide
+        reason
+        metadata
+        choiceContext
         (qtyAcc + tok.quantity)
         (payoutAcc + tok.quantity)
         (payoutCid :: payoutCids)
@@ -193,23 +436,48 @@ settleLosers
   : Text
   -> [ContractId OptionToken]
   -> OptionSide
+  -> Text
+  -> UserMetadata
+  -> ChoiceContext
   -> Update Decimal
-settleLosers expectedSeriesRef cids losingSide =
-  settleLosersAcc expectedSeriesRef cids losingSide 0.0
+settleLosers expectedSeriesRef cids losingSide reason metadata choiceContext =
+  settleLosersAcc expectedSeriesRef cids losingSide reason metadata choiceContext 0.0
 
 settleLosersAcc
   : Text
   -> [ContractId OptionToken]
   -> OptionSide
+  -> Text
+  -> UserMetadata
+  -> ChoiceContext
   -> Decimal
   -> Update Decimal
-settleLosersAcc _ [] _ qtyAcc = pure qtyAcc
-settleLosersAcc expectedSeriesRef (cid :: rest) losingSide qtyAcc = do
+settleLosersAcc _ [] _ _ _ _ qtyAcc = pure qtyAcc
+settleLosersAcc expectedSeriesRef (cid :: rest) losingSide reason metadata choiceContext qtyAcc = do
   tok <- fetch cid
   assertMsg "Loser token series mismatch" (tok.seriesRef == expectedSeriesRef)
   assertMsg "Loser token side mismatch" (tok.side == losingSide)
+  now <- getTime
+  case tok.lotCid of
+    Some lotCid -> do
+      _lotEventCid <- create PositionLotEvent with
+        operator = tok.operator
+        trader = tok.owner
+        lotCid
+        seriesRef = tok.seriesRef
+        side = tok.side
+        eventKind = LotEventSettlementLoss
+        quantity = tok.quantity
+        tokenCid = cid
+        reason = mkMarkerReason reason metadata
+        metadata
+        choiceContext
+        markerMetadata = mkSpliceMetadata reason metadata
+        eventTime = now
+      pure ()
+    None -> pure ()
   exercise cid SettleLoser
-  settleLosersAcc expectedSeriesRef rest losingSide (qtyAcc + tok.quantity)
+  settleLosersAcc expectedSeriesRef rest losingSide reason metadata choiceContext (qtyAcc + tok.quantity)
 
 -- | Immutable settlement report for audit and off-chain indexing.
 template SeriesSettlementRecord

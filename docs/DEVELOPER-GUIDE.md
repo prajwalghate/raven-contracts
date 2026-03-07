@@ -324,7 +324,7 @@ dpm test
 
 Core DAR for node upload:
 
-- `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-core-0.2.0.dar`
+- `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-0.2.1.dar`
 
 ## 10. Common Mistakes (and Fixes)
 

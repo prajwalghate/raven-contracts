@@ -3,11 +3,12 @@ module Test.Main where
 import Daml.Script
 import DA.Date (date, Month(..))
 import DA.Time (time, days)
+import Splice.Api.Token.MetadataV1 (emptyChoiceContext)
 
 import Types
 import Series
-import Vault
-import OptionToken
+import qualified Vault
+import OptionToken (UserMetadata(..), Split(..), Transfer(..))
 
 allocate : Text -> Script Party
 allocate n = allocateParty n
@@ -41,21 +42,50 @@ testHybridLifecycle = script do
   seriesCid <- mkSeries operator oracle house Active
 
   vault0 <- submit operator do
-    createCmd CollateralVault with
+    createCmd Vault.CollateralVault with
       operator
       house
       seriesRef = "SERIES-BTC-DAILY-001"
       ccReserve = 100.0
+      initialSeedLiquidity = 100.0
+      additionalSeedLiquidity = 0.0
       totalSetsMinted = 0.0
       settlementDone = False
 
+  -- Additional post-creation seed.
+  (vault0b, _) <- submit operator do
+    exerciseCmd vault0 Vault.AddSeedLiquidity with
+      amount = 10.0
+      metadata = UserMetadata with
+        externalUserId = Some "system-operator"
+        userMemo = Some "seed-top-up"
+      choiceContext = emptyChoiceContext
+      reason = "INITIAL_SEED_TOPUP"
+      featuredAppRightCid = None
+
+  (vault0c, _) <- submit operator do
+    exerciseCmd vault0b Vault.RemoveSeedLiquidity with
+      amount = 3.0
+      metadata = UserMetadata with
+        externalUserId = Some "system-operator"
+        userMemo = Some "seed-withdraw"
+      choiceContext = emptyChoiceContext
+      reason = "SEED_WITHDRAW"
+      featuredAppRightCid = None
+
   -- BUY 1: Alice wants CALL, unwanted PUT goes to house.
-  (vault1, aliceCall10, housePut10) <- submit operator do
-    exerciseCmd vault0 MintCompleteSets with
+  (vault1, aliceCall10, housePut10, _) <- submit operator do
+    exerciseCmd vault0c Vault.MintCompleteSets with
       trader = alice
       desiredSide = Call
       quantity = 10.0
       depositAmount = 12.0
+      featuredAppRightCid = None
+      choiceContext = emptyChoiceContext
+      metadata = UserMetadata with
+        externalUserId = Some "user-alice-001"
+        userMemo = Some "buy-call-10"
+      reason = "BUY_CALL_TRADE"
 
   aliceCall10Q <- queryContractId alice aliceCall10
   assertMsg "Alice should own 10 CALL tokens"
@@ -68,23 +98,35 @@ testHybridLifecycle = script do
   houseCall5 <- submit alice do
     exerciseCmd aliceCall5ToSell Transfer with newOwner = house
 
-  (vault2, sellPayoutCid) <- submit operator do
-    exerciseCmd vault1 ReleasePayout with
+  (vault2, sellPayoutCid, _) <- submit operator do
+    exerciseCmd vault1 Vault.ReleasePayout with
       trader = alice
+      soldTokenCid = houseCall5
       amount = 1.0
+      featuredAppRightCid = None
+      choiceContext = emptyChoiceContext
       reason = "SELL_PAYOUT"
+      metadata = UserMetadata with
+        externalUserId = Some "user-alice-001"
+        userMemo = Some "sell-call-5"
 
   sellPayoutQ <- queryContractId alice sellPayoutCid
   assertMsg "Sell payout should be created for Alice"
     (fmap (.amount) sellPayoutQ == Some 1.0)
 
   -- BUY 2: Bob wants PUT, unwanted CALL goes to house.
-  (vault3, bobPut8, houseCall8) <- submit operator do
-    exerciseCmd vault2 MintCompleteSets with
+  (vault3, bobPut8, houseCall8, _) <- submit operator do
+    exerciseCmd vault2 Vault.MintCompleteSets with
       trader = bob
       desiredSide = Put
       quantity = 8.0
       depositAmount = 9.0
+      featuredAppRightCid = None
+      choiceContext = emptyChoiceContext
+      metadata = UserMetadata with
+        externalUserId = Some "user-bob-002"
+        userMemo = Some "buy-put-8"
+      reason = "BUY_PUT_TRADE"
 
   -- Resolve: CALL wins (resolved price > strike).
   passTime (days 2)
@@ -92,11 +134,17 @@ testHybridLifecycle = script do
     exerciseCmd seriesCid SubmitSettlement with resolvedPrice = 140.0
 
   -- Settle and pay atomically: winning side = CALL.
-  (recordCid, winnerPayoutCids) <- submit operator do
-    exerciseCmd vault3 SettleAndPay with
+  (recordCid, winnerPayoutCids, _) <- submit operator do
+    exerciseCmd vault3 Vault.SettleAndPay with
       seriesCid = settledSeriesCid
       winningTokenCids = [houseCall5, aliceCall5Remain, houseCall8]
       losingTokenCids = [housePut10, bobPut8]
+      featuredAppRightCid = None
+      choiceContext = emptyChoiceContext
+      metadata = UserMetadata with
+        externalUserId = Some "system-operator"
+        userMemo = Some "finalize-series-001"
+      reason = "SERIES_SETTLEMENT_FINALIZED"
 
   recordQ <- queryContractId operator recordCid
   assertMsg "Settlement record should exist" (recordQ /= None)
@@ -108,7 +156,7 @@ testHybridLifecycle = script do
       assertMsg "External payout should equal Alice winning qty"
         (r.externalWinnerPayout == 5.0)
       assertMsg "House residual should match reserve minus payout"
-        (r.houseResidual == 115.0)
+        (r.houseResidual == 122.0)
     None -> abort "Expected settlement record"
 
   -- Only Alice should have an external settlement payout (house winners are not paid out).
@@ -143,39 +191,70 @@ testNegativeChecks = script do
       settlement = None
 
   vaultCid <- submit operator do
-    createCmd CollateralVault with
+    createCmd Vault.CollateralVault with
       operator
       house
       seriesRef = "SERIES-BTC-DAILY-001"
       ccReserve = 20.0
+      initialSeedLiquidity = 20.0
+      additionalSeedLiquidity = 0.0
       totalSetsMinted = 0.0
       settlementDone = False
 
   -- Unauthorized mint attempt.
   submitMustFail alice do
-    exerciseCmd vaultCid MintCompleteSets with
+    exerciseCmd vaultCid Vault.MintCompleteSets with
       trader = alice
       desiredSide = Call
       quantity = 1.0
       depositAmount = 1.2
+      featuredAppRightCid = None
+      choiceContext = emptyChoiceContext
+      metadata = UserMetadata with
+        externalUserId = Some "neg-user-alice"
+        userMemo = Some "unauthorized-mint"
+      reason = "UNAUTHORIZED_MINT_ATTEMPT"
 
   -- Settlement before end-time should fail when series not ended and wall-clock < endTime.
   submitMustFail oracle do
     exerciseCmd seriesCid SubmitSettlement with resolvedPrice = 110.0
 
   -- Release payout cannot breach collateral floor.
-  (vault1, _, _) <- submit operator do
-    exerciseCmd vaultCid MintCompleteSets with
+  (vault1, _, houseCall5Neg, _) <- submit operator do
+    exerciseCmd vaultCid Vault.MintCompleteSets with
       trader = alice
       desiredSide = Put
       quantity = 5.0
       depositAmount = 5.0
+      featuredAppRightCid = None
+      choiceContext = emptyChoiceContext
+      metadata = UserMetadata with
+        externalUserId = Some "neg-user-alice"
+        userMemo = Some "neg-buy"
+      reason = "NEGATIVE_BUY"
 
   submitMustFail operator do
-    exerciseCmd vault1 ReleasePayout with
+    exerciseCmd vault1 Vault.ReleasePayout with
       trader = alice
+      soldTokenCid = houseCall5Neg
       amount = 21.0
+      featuredAppRightCid = None
+      choiceContext = emptyChoiceContext
       reason = "INVALID_PAYOUT"
+      metadata = UserMetadata with
+        externalUserId = Some "neg-user-alice"
+        userMemo = Some "invalid-release"
+
+  -- Cannot remove more seed than tracked as additional seed.
+  submitMustFail operator do
+    exerciseCmd vault1 Vault.RemoveSeedLiquidity with
+      amount = 100.0
+      metadata = UserMetadata with
+        externalUserId = Some "neg-operator"
+        userMemo = Some "invalid-seed-remove"
+      choiceContext = emptyChoiceContext
+      reason = "INVALID_SEED_REMOVE"
+      featuredAppRightCid = None
 
   pure ()
 

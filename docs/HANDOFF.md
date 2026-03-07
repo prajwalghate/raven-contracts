@@ -18,14 +18,14 @@ dpm test
 
 Use only the core DAR:
 
-- `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-core-0.2.0.dar`
+- `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-0.2.1.dar`
 
 Do not upload the tests DAR in production.
 
 ## Node Team Inputs
 
 - Core DAR file
-- package name/version: `raven-contracts-core:0.2.0`
+- package name/version: `raven-contracts:0.2.1`
 - Party mapping for `operator`, `oracle`, `house`
 - backend integration doc: `docs/CONTRACT-SPEC.md`
 

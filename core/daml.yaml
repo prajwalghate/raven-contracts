@@ -1,4 +1,4 @@
-name: raven-contracts-core
+name: raven-contracts-v2
 version: 0.2.0
 sdk-version: 3.4.11
 
@@ -6,3 +6,6 @@ source: src
 dependencies:
   - daml-prim
   - daml-stdlib
+data-dependencies:
+  - ../../splice/daml/dars/splice-api-featured-app-v1-1.0.0.dar
+  - ../../splice/daml/dars/splice-api-token-metadata-v1-1.0.0.dar
