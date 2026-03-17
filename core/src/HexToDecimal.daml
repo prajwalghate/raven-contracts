@@ -1,0 +1,17 @@
+-- | Convert hex strings to Decimal values.
+-- Adapted from data-streams-canton-integration examples.
+module HexToDecimal where
+
+import DA.Text qualified as T
+
+-- | Convert unsigned hex to Decimal.
+hexToUnsignedDecimal : Text -> Decimal
+hexToUnsignedDecimal hex =
+  let s = T.dropWhile (== "0") hex
+      hexVal : Text -> Decimal
+      hexVal c = case c of
+        "0" -> 0.0; "1" -> 1.0; "2" -> 2.0; "3" -> 3.0; "4" -> 4.0; "5" -> 5.0
+        "6" -> 6.0; "7" -> 7.0; "8" -> 8.0; "9" -> 9.0; "a" -> 10.0; "b" -> 11.0
+        "c" -> 12.0; "d" -> 13.0; "e" -> 14.0; "f" -> 15.0; _ -> error "invalid hex"
+  in if T.length s == 0 then (0.0 : Decimal)
+     else foldl (\acc c -> acc * 16.0 + hexVal c) (0.0 : Decimal) (T.explode s)

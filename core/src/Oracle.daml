@@ -1,0 +1,118 @@
+-- | Chainlink Data Streams oracle integration (verified on-ledger).
+module Oracle where
+
+import DA.Time
+import DA.Date (date, Month(..))
+import DA.Crypto.Text (BytesHex)
+import OptionToken (UserMetadata(..), mkMarkerReason, mkSpliceMetadata, ActivityAudit(..))
+import Splice.Api.Token.MetadataV1 (ChoiceContext)
+import Splice.Api.FeaturedAppRightV1
+import Verifier (Verifier, Verify(..))
+import VerifierConfig (VerifierConfig)
+import ReportDataV3 (parseReportDataV3)
+
+-- | Check if a price report's observation time is recent enough.
+priceIsRecent : Decimal -> Time -> Int -> Bool
+priceIsRecent observationsTimestamp currentTime maxStalenessSeconds =
+  let currentMicros = convertRelTimeToMicroseconds (subTime currentTime (time (date 1970 Jan 1) 0 0 0))
+      currentSeconds = intToDecimal currentMicros / 1000000.0
+      age = currentSeconds - observationsTimestamp
+  in age <= intToDecimal maxStalenessSeconds
+
+-- | Simple per-series oracle price record.
+template SeriesOracle
+  with
+    oracle : Party
+    operator : Party
+    seriesRef : Text
+    resolvedPrice : Decimal
+    updatedAt : Time
+    maxStalenessSeconds : Int
+  where
+    signatory oracle
+    observer operator
+
+    ensure resolvedPrice > 0.0 && maxStalenessSeconds > 0
+
+    -- | Update resolved price from a signed Chainlink report.
+    choice UpdatePrice : ContractId SeriesOracle
+      with
+        verifierCid : ContractId Verifier
+        verifierConfigCid : ContractId VerifierConfig
+        signedReportBytes : BytesHex
+        metadata : UserMetadata
+        choiceContext : ChoiceContext
+        reason : Text
+        featuredAppRightCid : Optional (ContractId FeaturedAppRight)
+      controller oracle, operator
+      do
+        reportDataBytes <- exercise verifierCid Verify with
+          configCid = verifierConfigCid
+          signedReportBytes = signedReportBytes
+          sender = oracle
+
+        let report = parseReportDataV3 reportDataBytes
+        now <- getTime
+        assertMsg "Price report is stale"
+          (priceIsRecent report.observationsTimestamp now maxStalenessSeconds)
+
+        _auditCid <- create ActivityAudit with
+          operator
+          actor = oracle
+          seriesRef
+          action = "ORACLE_PRICE_UPDATE"
+          reason = mkMarkerReason reason metadata
+          metadata
+          choiceContext
+          markerMetadata = mkSpliceMetadata reason metadata
+          eventTime = now
+
+        _markerCids <- createFeaturedMarker featuredAppRightCid operator
+
+        create this with
+          resolvedPrice = report.benchmarkPrice
+          updatedAt = now
+
+    -- | Manual override for testing or emergency use.
+    choice SetPrice : ContractId SeriesOracle
+      with
+        newPrice : Decimal
+        metadata : UserMetadata
+        choiceContext : ChoiceContext
+        reason : Text
+        featuredAppRightCid : Optional (ContractId FeaturedAppRight)
+      controller oracle, operator
+      do
+        assertMsg "Price must be positive" (newPrice > 0.0)
+        now <- getTime
+
+        _auditCid <- create ActivityAudit with
+          operator
+          actor = oracle
+          seriesRef
+          action = "ORACLE_PRICE_SET"
+          reason = mkMarkerReason reason metadata
+          metadata
+          choiceContext
+          markerMetadata = mkSpliceMetadata reason metadata
+          eventTime = now
+
+        _markerCids <- createFeaturedMarker featuredAppRightCid operator
+
+        create this with
+          resolvedPrice = newPrice
+          updatedAt = now
+
+createFeaturedMarker
+  : Optional (ContractId FeaturedAppRight)
+  -> Party
+  -> Update [ContractId FeaturedAppActivityMarker]
+createFeaturedMarker featuredAppRightCid operator =
+  case featuredAppRightCid of
+    Some rightCid -> do
+      right <- fetch rightCid
+      assertMsg "Featured app right provider mismatch" ((view right).provider == operator)
+      FeaturedAppRight_CreateActivityMarkerResult activityMarkerCids <- exercise rightCid FeaturedAppRight_CreateActivityMarker with
+        beneficiaries = [AppRewardBeneficiary with beneficiary = operator, weight = 1.0]
+      pure activityMarkerCids
+    None -> pure []

@@ -50,7 +50,7 @@ dpm test
 ## Output DARs
 
 - Core DAR (upload target):
-  - `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-0.2.1.dar`
+  - `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-v2-0.2.0.dar`
 - Tests DAR (local/testing only):
   - `/Users/prajwalghate/Documents/Work/canton/raven-contracts/tests/.daml/dist/raven-contracts-tests-0.2.1.dar`
 
@@ -63,6 +63,7 @@ dpm test
 
 Read next:
 
+- `docs/ONBOARDING-GUIDE.md`
 - `docs/CONTRACT-SPEC.md`
 - `docs/FUNCTIONALITY-FLOW.md`
 - `docs/DEVELOPER-GUIDE.md`

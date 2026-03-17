@@ -44,7 +44,7 @@ Start sandbox (terminal 1):
 cd /Users/prajwalghate/Documents/Work/canton/raven-contracts
 dpm sandbox \
   --static-time \
-  --dar /Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-0.2.1.dar \
+  --dar /Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-v2-0.2.0.dar \
   --dar /Users/prajwalghate/Documents/Work/canton/raven-contracts/tests/.daml/dist/raven-contracts-tests-0.2.1.dar
 ```
 

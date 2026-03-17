@@ -7,6 +7,7 @@ import Splice.Api.Token.MetadataV1 (emptyChoiceContext)
 
 import Types
 import Series
+import Oracle
 import qualified Vault
 import OptionToken (UserMetadata(..), Split(..), Transfer(..))
 
@@ -40,6 +41,14 @@ testHybridLifecycle = script do
   bob <- allocate "Bob"
 
   seriesCid <- mkSeries operator oracle house Active
+  oracleCid <- submit oracle do
+    createCmd SeriesOracle with
+      oracle
+      operator
+      seriesRef = "SERIES-BTC-DAILY-001"
+      resolvedPrice = 100.0
+      updatedAt = time (date 1970 Jan 1) 0 0 0
+      maxStalenessSeconds = 3600
 
   vault0 <- submit operator do
     createCmd Vault.CollateralVault with
@@ -130,8 +139,25 @@ testHybridLifecycle = script do
 
   -- Resolve: CALL wins (resolved price > strike).
   passTime (days 2)
+  oracleCid2 <- submitMulti [oracle, operator] [] do
+    exerciseCmd oracleCid SetPrice with
+      newPrice = 140.0
+      metadata = UserMetadata with
+        externalUserId = Some "oracle-001"
+        userMemo = Some "price-update"
+      choiceContext = emptyChoiceContext
+      reason = "PRICE_UPDATE"
+      featuredAppRightCid = None
+
   settledSeriesCid <- submit oracle do
-    exerciseCmd seriesCid SubmitSettlement with resolvedPrice = 140.0
+    exerciseCmd seriesCid SubmitSettlement with
+      oraclePriceCid = oracleCid2
+      metadata = UserMetadata with
+        externalUserId = Some "oracle-001"
+        userMemo = Some "price-update"
+      choiceContext = emptyChoiceContext
+      reason = "PRICE_UPDATE"
+      featuredAppRightCid = None
 
   -- Settle and pay atomically: winning side = CALL.
   (recordCid, winnerPayoutCids, _) <- submit operator do
@@ -216,8 +242,24 @@ testNegativeChecks = script do
       reason = "UNAUTHORIZED_MINT_ATTEMPT"
 
   -- Settlement before end-time should fail when series not ended and wall-clock < endTime.
+  oracleCid <- submit oracle do
+    createCmd SeriesOracle with
+      oracle
+      operator
+      seriesRef = "SERIES-BTC-DAILY-NEG"
+      resolvedPrice = 110.0
+      updatedAt = time (date 1970 Jan 1) 0 0 0
+      maxStalenessSeconds = 3600
+
   submitMustFail oracle do
-    exerciseCmd seriesCid SubmitSettlement with resolvedPrice = 110.0
+    exerciseCmd seriesCid SubmitSettlement with
+      oraclePriceCid = oracleCid
+      metadata = UserMetadata with
+        externalUserId = Some "neg-oracle"
+        userMemo = Some "early-settlement"
+      choiceContext = emptyChoiceContext
+      reason = "PRICE_UPDATE_EARLY"
+      featuredAppRightCid = None
 
   -- Release payout cannot breach collateral floor.
   (vault1, _, houseCall5Neg, _) <- submit operator do

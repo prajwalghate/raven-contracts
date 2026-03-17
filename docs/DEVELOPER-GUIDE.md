@@ -10,7 +10,7 @@ This guide is the practical reference for developers integrating and extending R
 
 ## 2. Current package artifacts
 
-- Core DAR: `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-0.2.1.dar`
+- Core DAR: `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-v2-0.2.0.dar`
 - Tests DAR: `/Users/prajwalghate/Documents/Work/canton/raven-contracts/tests/.daml/dist/raven-contracts-tests-0.2.1.dar`
 
 ## 3. Contract modules

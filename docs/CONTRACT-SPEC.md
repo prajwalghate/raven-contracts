@@ -15,8 +15,19 @@ Fields:
 Choices:
 - `Activate` (operator)
 - `EndTrading` (operator)
-- `SubmitSettlement` (oracle): commits `resolvedPrice` and winning side
+- `SubmitSettlement` (oracle): uses `oraclePriceCid` to read resolved price and compute winning side; includes `metadata`, `choiceContext`, `reason`, and optional `featuredAppRightCid` (emits marker + audit)
 - `Invalidate` (operator)
+
+## `SeriesOracle`
+
+Purpose: on-ledger oracle price record for a single series.
+
+Fields:
+- `oracle`, `operator`, `seriesRef`, `resolvedPrice`, `updatedAt`, `maxStalenessSeconds`
+
+Choices:
+- `UpdatePrice` (oracle + operator): verifies Chainlink report and updates price
+- `SetPrice` (oracle + operator): manual override for testing/emergency
 
 ## `OptionToken`
 

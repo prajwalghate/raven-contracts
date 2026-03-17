@@ -1,6 +1,10 @@
 module Series where
 
 import Types
+import OptionToken (UserMetadata(..), mkMarkerReason, mkSpliceMetadata, ActivityAudit(..))
+import Oracle (SeriesOracle(..))
+import Splice.Api.Token.MetadataV1 (ChoiceContext)
+import Splice.Api.FeaturedAppRightV1
 
 -- | Canonical metadata + settlement authority for one binary options series.
 template OptionSeries
@@ -51,18 +55,40 @@ template OptionSeries
     -- | Commit oracle price and compute winning side.
     choice SubmitSettlement : ContractId OptionSeries
       with
-        resolvedPrice : Decimal
+        oraclePriceCid : ContractId SeriesOracle
+        metadata : UserMetadata
+        choiceContext : ChoiceContext
+        reason : Text
+        featuredAppRightCid : Optional (ContractId FeaturedAppRight)
       controller oracle
       do
         now <- getTime
         assertMsg "Settlement requires trading ended" (status == Ended || now >= endTime)
         assertMsg "Series already settled or invalidated" (status /= Settled && status /= Invalidated)
 
-        let winningSide = if resolvedPrice > strikePrice then Call else Put
+        price <- fetch oraclePriceCid
+        assertMsg "Oracle contract series mismatch" (price.seriesRef == seriesRef)
+        assertMsg "Oracle party mismatch" (price.oracle == oracle)
 
-        create this with
+        let winningSide = if price.resolvedPrice > strikePrice then Call else Put
+        nextSeriesCid <- create this with
           status = Settled
-          settlement = Some (SettlementOutcome with resolvedPrice, winningSide)
+          settlement = Some (SettlementOutcome with resolvedPrice = price.resolvedPrice, winningSide)
+
+        _auditCid <- create ActivityAudit with
+          operator
+          actor = oracle
+          seriesRef
+          action = "SUBMIT_SETTLEMENT"
+          reason = mkMarkerReason reason metadata
+          metadata
+          choiceContext
+          markerMetadata = mkSpliceMetadata reason metadata
+          eventTime = now
+
+        _markerCids <- createFeaturedMarker featuredAppRightCid operator
+
+        pure nextSeriesCid
 
     -- | Emergency invalidation path.
     choice Invalidate : ContractId OptionSeries
@@ -72,3 +98,17 @@ template OptionSeries
       do
         assertMsg "Cannot invalidate a settled series" (status /= Settled)
         create this with status = Invalidated
+
+createFeaturedMarker
+  : Optional (ContractId FeaturedAppRight)
+  -> Party
+  -> Update [ContractId FeaturedAppActivityMarker]
+createFeaturedMarker featuredAppRightCid operator =
+  case featuredAppRightCid of
+    Some rightCid -> do
+      right <- fetch rightCid
+      assertMsg "Featured app right provider mismatch" ((view right).provider == operator)
+      FeaturedAppRight_CreateActivityMarkerResult activityMarkerCids <- exercise rightCid FeaturedAppRight_CreateActivityMarker with
+        beneficiaries = [AppRewardBeneficiary with beneficiary = operator, weight = 1.0]
+      pure activityMarkerCids
+    None -> pure []

@@ -8,5 +8,5 @@ dependencies:
   - daml-stdlib
   - daml-script
 data-dependencies:
-  - ../core/.daml/dist/raven-contracts-0.2.1.dar
+  - ../core/.daml/dist/raven-contracts-v2-0.2.0.dar
   - ../../splice/daml/dars/splice-api-token-metadata-v1-1.0.0.dar

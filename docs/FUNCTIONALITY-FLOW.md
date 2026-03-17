@@ -16,8 +16,8 @@ This document explains each core function (template choice), what it does, and t
 
 ### `SubmitSettlement`
 - Controller: `oracle`
-- Purpose: posts final resolved price and winning side (CALL/PUT).
-- Effect: updates `OptionSeries.status = Settled` and stores settlement outcome.
+- Purpose: reads oracle price contract for resolved price and winning side (CALL/PUT) and records price update audit.
+- Effect: updates `OptionSeries.status = Settled`, stores settlement outcome, emits optional activity marker and audit.
 
 ### `Invalidate`
 - Controller: `operator`
@@ -133,7 +133,280 @@ This document explains each core function (template choice), what it does, and t
 - Controller: `recipient`
 - Purpose: payout acknowledgement hook.
 
-## 6) Marker + Memo metadata behavior
+## 6) Backend call snippets (exact choice arguments)
+
+These snippets use the exact DAML choice argument names.
+Transport/client library can differ, but payload fields must match these names.
+
+Optional fields:
+- `featuredAppRightCid`: pass contract-id or `None`/`null`.
+- `choiceContext`: pass empty object/map when unused.
+
+### 6.1 Series lifecycle calls
+
+`SeriesOracle.UpdatePrice` (Chainlink report):
+
+```json
+{
+  "contractId": "<seriesOracleCid>",
+  "choice": "UpdatePrice",
+  "argument": {
+    "verifierCid": "<verifierCid>",
+    "verifierConfigCid": "<verifierConfigCid>",
+    "signedReportBytes": "<chainlink-signed-report-hex>",
+    "metadata": {
+      "externalUserId": "oracle-001",
+      "userMemo": "price-update"
+    },
+    "choiceContext": { "values": {} },
+    "reason": "PRICE_UPDATE",
+    "featuredAppRightCid": "<featuredAppRightCid or null>"
+  },
+  "actingParties": ["<oracle>", "<operator>"]
+}
+```
+
+`SeriesOracle.SetPrice` (manual override):
+
+```json
+{
+  "contractId": "<seriesOracleCid>",
+  "choice": "SetPrice",
+  "argument": {
+    "newPrice": "140.0",
+    "metadata": {
+      "externalUserId": "oracle-001",
+      "userMemo": "price-update"
+    },
+    "choiceContext": { "values": {} },
+    "reason": "PRICE_UPDATE",
+    "featuredAppRightCid": "<featuredAppRightCid or null>"
+  },
+  "actingParties": ["<oracle>", "<operator>"]
+}
+```
+
+`OptionSeries.Activate`:
+
+```json
+{
+  "contractId": "<seriesCid>",
+  "choice": "Activate",
+  "argument": {},
+  "actingParties": ["<operator>"]
+}
+```
+
+`OptionSeries.EndTrading`:
+
+```json
+{
+  "contractId": "<seriesCid>",
+  "choice": "EndTrading",
+  "argument": {},
+  "actingParties": ["<operator>"]
+}
+```
+
+`OptionSeries.SubmitSettlement`:
+
+```json
+{
+  "contractId": "<seriesCid>",
+  "choice": "SubmitSettlement",
+  "argument": {
+    "oraclePriceCid": "<seriesOracleCid>",
+    "metadata": {
+      "externalUserId": "oracle-001",
+      "userMemo": "price-update"
+    },
+    "choiceContext": { "values": {} },
+    "reason": "PRICE_UPDATE",
+    "featuredAppRightCid": "<featuredAppRightCid or null>"
+  },
+  "actingParties": ["<oracle>"]
+}
+```
+
+Note: if `featuredAppRightCid` is provided, the submit must include the featured app provider (usually `operator`) as an acting party because `FeaturedAppRight_CreateActivityMarker` is controlled by the provider.
+
+`OptionSeries.Invalidate`:
+
+```json
+{
+  "contractId": "<seriesCid>",
+  "choice": "Invalidate",
+  "argument": {
+    "_reason": "MANUAL_INVALIDATION"
+  },
+  "actingParties": ["<operator>"]
+}
+```
+
+### 6.2 Seed liquidity calls
+
+`CollateralVault.AddSeedLiquidity`:
+
+```json
+{
+  "contractId": "<vaultCid>",
+  "choice": "AddSeedLiquidity",
+  "argument": {
+    "amount": "50.0",
+    "metadata": {
+      "externalUserId": "system-operator",
+      "userMemo": "seed-topup-round-1"
+    },
+    "choiceContext": { "values": {} },
+    "reason": "SEED_TOPUP",
+    "featuredAppRightCid": "<featuredAppRightCid or null>"
+  },
+  "actingParties": ["<operator>"]
+}
+```
+
+`CollateralVault.RemoveSeedLiquidity`:
+
+```json
+{
+  "contractId": "<vaultCid>",
+  "choice": "RemoveSeedLiquidity",
+  "argument": {
+    "amount": "10.0",
+    "metadata": {
+      "externalUserId": "system-operator",
+      "userMemo": "seed-withdraw-round-1"
+    },
+    "choiceContext": { "values": {} },
+    "reason": "SEED_WITHDRAW",
+    "featuredAppRightCid": "<featuredAppRightCid or null>"
+  },
+  "actingParties": ["<operator>"]
+}
+```
+
+### 6.3 Buy flow call
+
+`CollateralVault.MintCompleteSets`:
+
+```json
+{
+  "contractId": "<vaultCid>",
+  "choice": "MintCompleteSets",
+  "argument": {
+    "trader": "<traderParty>",
+    "desiredSide": "Call",
+    "quantity": "10.0",
+    "depositAmount": "12.0",
+    "metadata": {
+      "externalUserId": "user-alice-001",
+      "userMemo": "buy-call-10"
+    },
+    "choiceContext": { "values": {} },
+    "reason": "BUY_CALL_TRADE",
+    "featuredAppRightCid": "<featuredAppRightCid or null>"
+  },
+  "actingParties": ["<operator>"]
+}
+```
+
+### 6.4 Sell flow calls
+
+`OptionToken.Split` (user side):
+
+```json
+{
+  "contractId": "<userTokenCid>",
+  "choice": "Split",
+  "argument": {
+    "splitQty": "5.0"
+  },
+  "actingParties": ["<tokenOwner>"]
+}
+```
+
+`OptionToken.Transfer` (user side):
+
+```json
+{
+  "contractId": "<splitTokenCidToSell>",
+  "choice": "Transfer",
+  "argument": {
+    "newOwner": "<houseParty>"
+  },
+  "actingParties": ["<tokenOwner>"]
+}
+```
+
+`CollateralVault.ReleasePayout` (operator side):
+
+```json
+{
+  "contractId": "<vaultCid>",
+  "choice": "ReleasePayout",
+  "argument": {
+    "trader": "<traderParty>",
+    "soldTokenCid": "<tokenAlreadyTransferredToHouseCid>",
+    "amount": "1.0",
+    "reason": "SELL_PAYOUT",
+    "metadata": {
+      "externalUserId": "user-alice-001",
+      "userMemo": "sell-call-5"
+    },
+    "choiceContext": { "values": {} },
+    "featuredAppRightCid": "<featuredAppRightCid or null>"
+  },
+  "actingParties": ["<operator>"]
+}
+```
+
+### 6.5 Settlement flow calls
+
+`CollateralVault.SettleAndPay`:
+
+```json
+{
+  "contractId": "<vaultCid>",
+  "choice": "SettleAndPay",
+  "argument": {
+    "seriesCid": "<settledSeriesCid>",
+    "winningTokenCids": ["<cid1>", "<cid2>", "<cid3>"],
+    "losingTokenCids": ["<cid4>", "<cid5>"],
+    "metadata": {
+      "externalUserId": "system-operator",
+      "userMemo": "finalize-series-001"
+    },
+    "choiceContext": { "values": {} },
+    "reason": "SERIES_SETTLEMENT_FINALIZED",
+    "featuredAppRightCid": "<featuredAppRightCid or null>"
+  },
+  "actingParties": ["<operator>"]
+}
+```
+
+Important:
+- `SettleWinner` / `SettleLoser` are exercised internally by `SettleAndPay`; backend should not call them directly in normal flow.
+
+### 6.6 Daml Script form (reference-accurate)
+
+When using Daml Script, same arguments look like:
+
+```daml
+submit operator do
+  exerciseCmd vaultCid MintCompleteSets with
+    trader = alice
+    desiredSide = Call
+    quantity = 10.0
+    depositAmount = 12.0
+    metadata = UserMetadata with
+      externalUserId = Some "user-alice-001"
+      userMemo = Some "buy-call-10"
+    choiceContext = emptyChoiceContext
+    reason = "BUY_CALL_TRADE"
+    featuredAppRightCid = None
+```
+
+## 7) Marker + Memo metadata behavior
 
 - Splice marker choice used: `FeaturedAppRight_CreateActivityMarker`.
 - Memo/user metadata is captured in Raven audit as Splice-style metadata map:
@@ -142,7 +415,7 @@ This document explains each core function (template choice), what it does, and t
   - `raven.market/user_memo`
 - `choiceContext` is carried and stored in `ActivityAudit` for backend traceability.
 
-## 7) End-to-end flow diagram
+## 8) End-to-end flow diagram
 
 ```mermaid
 flowchart TD
@@ -175,7 +448,7 @@ flowchart TD
   F5 -->|No| F7["Skip marker"]
 ```
 
-## 8) Function-level sequence (MintCompleteSets)
+## 9) Function-level sequence (MintCompleteSets)
 
 ```mermaid
 sequenceDiagram
@@ -200,7 +473,7 @@ sequenceDiagram
   V-->>O: (newVaultCid, traderTokenCid, houseTokenCid, markerCids)
 ```
 
-## 9) Getter and storage map
+## 10) Getter and storage map
 
 DAML has no Solidity-style view getters. Read data by:
 - querying active contracts by template
@@ -217,7 +490,7 @@ Main storage and what backend reads:
 - `SeriesSettlementRecord`: immutable settlement report.
 - `ActivityAudit`: reason/memo/context audit records.
 
-## 10) Team FAQ (short form)
+## 11) Team FAQ (short form)
 
 ### Is liquidity common across series?
 No. Each series has its own vault/accounting.
@@ -237,3 +510,44 @@ Yes. Ledger writes payout + audit (+ lot event). Off-chain processor performs ac
 
 ### Why does script fail with wallclock `setTime` error?
 Because tests use `passTime`. Run both sandbox and script with `--static-time`.
+
+## 12) Money Flow Diagram (Detailed)
+
+House is the treasury party (`house`). It is a ledger party that represents your treasury wallet/account in the model.
+
+```mermaid
+flowchart TD
+  A["User (Trader)
+Pays CC collateral off-chain to treasury
+Requests BUY from backend"] --> B["Backend
+Calculates price off-chain
+Calls MintCompleteSets"]
+
+  B --> C["CollateralVault
+Increases ccReserve by depositAmount
+Creates PositionLot + ActivityAudit"]
+
+  C --> D["OptionToken (Trader)
+Receives desired side token"]
+  C --> E["OptionToken (House/Treasury)
+Receives opposite-side token"]
+
+  F["User SELL
+Transfers token to House"] --> G["OptionToken (House/Treasury)
+Holds sold token"]
+  G --> H["CollateralVault.ReleasePayout
+Checks soldTokenCid is house-owned
+Creates CCPayout"]
+  H --> I["CCPayout
+Backend pays user off-chain
+Reserve decreases"]
+
+  J["Oracle Settlement
+Resolved price posted"] --> K["SettleAndPay
+Consumes all tokens
+Creates SeriesSettlementRecord"]
+  K --> L["CCPayouts for external winners
+Only for non-house winners"]
+  K --> M["House residual
+ccReserve - external payouts"]
+```

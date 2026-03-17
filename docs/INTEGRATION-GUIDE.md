@@ -6,7 +6,7 @@ This guide maps `ALPEND-PREDICTIONS-` backend flows to Raven contracts.
 
 - Backend: `/Users/prajwalghate/Documents/Work/canton/ALPEND-PREDICTIONS-`
 - Contracts: `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core`
-- Upload DAR: `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-0.2.1.dar`
+- Upload DAR: `/Users/prajwalghate/Documents/Work/canton/raven-contracts/core/.daml/dist/raven-contracts-v2-0.2.0.dar`
 
 ## Pool Model (Important)
 
@@ -47,12 +47,15 @@ Without these, stale CID failures are guaranteed.
 On DB series create:
 
 1. Create `OptionSeries` on ledger.
-2. Create initial `CollateralVault` for `seriesRef`.
+2. Create `SeriesOracle` on ledger (one per series).
+   - Set `resolvedPrice` to an initial placeholder (e.g., strike).
+   - Persist `series_oracle_cid` for settlement updates.
+3. Create initial `CollateralVault` for `seriesRef`.
    - Set `ccReserve` to initial seed liquidity value.
    - Set `initialSeedLiquidity` to the same value at creation.
    - Set `additionalSeedLiquidity = 0.0`.
    - In V1 this is the seed mechanism at creation time.
-3. Persist returned `option_series_cid` and `vault_cid`.
+4. Persist returned `option_series_cid`, `series_oracle_cid`, and `vault_cid`.
 
 Seed liquidity note:
 - Yes, if you keep seed liquidity, provide it during vault creation (`ccReserve`).
@@ -93,12 +96,17 @@ Ledger steps:
 
 Current backend fetches price and writes DB settlement. In hybrid mode:
 
-1. Determine resolved price (backend source unchanged for now).
-2. Execute `SubmitSettlement(resolvedPrice)` on latest `OptionSeries` CID.
+1. Oracle updates the on-ledger price via `SeriesOracle.UpdatePrice` using a signed Chainlink report.
+   - Must include `operator` as an acting party because the choice emits `ActivityAudit` and optional activity marker controlled by the operator/provider.
+2. Execute `SubmitSettlement(oraclePriceCid, metadata, choiceContext, reason, featuredAppRightCid)` on latest `OptionSeries` CID.
+   - If `featuredAppRightCid` is provided, the submit must include the featured app provider (usually `operator`) as an acting party.
 3. Collect complete winning and losing token CID lists for series.
 4. Execute `SettleAndPay(seriesCid, winningTokenCids, losingTokenCids, metadata, choiceContext, reason, featuredAppRightCid)` on latest vault CID.
 5. Persist settlement record CID and payout CIDs.
 6. Update DB status and payout queue based on resulting ledger events.
+
+Oracle update parameters:
+- `newPrice`, `metadata`, `choiceContext`, `reason`, `featuredAppRightCid`
 
 ## Idempotency Rules
 

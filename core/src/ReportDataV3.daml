@@ -1,0 +1,41 @@
+-- | V3 Report Decoder for Chainlink Data Streams.
+-- Adapted from data-streams-canton-integration examples.
+module ReportDataV3 where
+
+import DA.Text qualified as T
+import ReportPayloadDecoder (extractWord, wordSize)
+import DA.Crypto.Text (BytesHex, byteCount)
+import HexToDecimal (hexToUnsignedDecimal)
+
+-- | Decoded Chainlink V3 report data.
+data ReportDataV3 = ReportDataV3
+  with
+    feedId                : BytesHex
+    validFromTimestamp    : Decimal
+    observationsTimestamp : Decimal
+    nativeFee             : Decimal
+    linkFee               : Decimal
+    expiresAt             : Decimal
+    benchmarkPrice        : Decimal
+    bid                   : Decimal
+    ask                   : Decimal
+  deriving (Eq, Show)
+
+-- | Parse verified report data bytes into a V3 report structure.
+parseReportDataV3 : BytesHex -> ReportDataV3
+parseReportDataV3 d | byteCount d /= 9 * wordSize = error "bad size"
+parseReportDataV3 d = ReportDataV3
+  { feedId                = extractWord d 0
+  , validFromTimestamp    = hexToUnsignedDecimal (extractWord d 1)
+  , observationsTimestamp = hexToUnsignedDecimal (extractWord d 2)
+  , nativeFee             = hexToUnsignedDecimal (extractWord d 3)
+  , linkFee               = hexToUnsignedDecimal (extractWord d 4)
+  , expiresAt             = hexToUnsignedDecimal (extractWord d 5)
+  , benchmarkPrice        = hexToUnsignedDecimal (extractWord d 6)
+  , bid                   = hexToUnsignedDecimal (extractWord d 7)
+  , ask                   = hexToUnsignedDecimal (extractWord d 8)
+  }
+
+-- | Check if a feed ID is a V3 feed (starts with "0003").
+isV3FeedId : Text -> Bool
+isV3FeedId = (== "0003") . T.take 4

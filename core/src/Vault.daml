@@ -1,7 +1,7 @@
 module Vault where
 
 import Types
-import Series
+import Series hiding (createFeaturedMarker)
 import OptionToken
 import Splice.Api.FeaturedAppRightV1
 import Splice.Api.Token.MetadataV1 (ChoiceContext)
