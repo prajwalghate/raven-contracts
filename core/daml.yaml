@@ -10,10 +10,10 @@ data-dependencies:
   - ../../splice/daml/dars/splice-api-featured-app-v1-1.0.0.dar
   - ../../splice/daml/dars/splice-api-token-metadata-v1-1.0.0.dar
   # Oracle / Data Streams verification
-  - ../../data-streams-canton-integration/src/verifier/main/.daml/dist/verifier-1.0.0.dar
-  - ../../data-streams-canton-integration/src/verifier-config/main/.daml/dist/verifier-config-1.0.0.dar
-  - ../../data-streams-canton-integration/src/domain/main/.daml/dist/domain-1.0.0.dar
-  - ../../data-streams-canton-integration/src/common/main/.daml/dist/common-1.0.0.dar
+  - ../../data-streams-canton-integration/verifier-1.0.0.dar
+  - ../../data-streams-canton-integration/verifier-config-1.0.0.dar
+  - ../../data-streams-canton-integration/domain-1.0.0.dar
+  - ../../data-streams-canton-integration/common-1.0.0.dar
 
 build-options:
   - -Wno-crypto-text-is-alpha
