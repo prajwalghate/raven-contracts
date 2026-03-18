@@ -19,6 +19,7 @@ This guide is the practical reference for developers integrating and extending R
 - `Series.daml`: series lifecycle and oracle settlement.
 - `OptionToken.daml`: option tokens, payouts, lot records, audit records.
 - `Vault.daml`: reserve accounting, mint/sell payout/settlement, seed liquidity controls.
+- `Oracle.daml`: Chainlink Data Streams integration (requires DARs in `dars/`).
 
 ## 4. Lifecycle summary
 

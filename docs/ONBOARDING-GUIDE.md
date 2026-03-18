@@ -23,7 +23,6 @@ Docs to read next:
 - `docs/FUNCTIONALITY-FLOW.md`
 - `docs/INTEGRATION-GUIDE.md`
 - `docs/SANDBOX-AND-SCRIPT-TESTING.md`
-- `docs/AUDIT-PLAN.md`
 
 External Canton/Daml references (latest):
 - Digital Asset Daml Assistant + component how-tos
@@ -115,6 +114,12 @@ Build:
 cd /Users/prajwalghate/Documents/Work/canton/raven-contracts
 dpm build --all
 ```
+
+If build fails due to missing Chainlink verifier DARs, download the Data Streams Canton integration DARs and place them in `dars/`:
+- `verifier-1.0.0.dar`
+- `verifier-config-1.0.0.dar`
+- `domain-1.0.0.dar`
+- `common-1.0.0.dar`
 
 Run tests:
 ```bash
